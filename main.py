@@ -51,7 +51,7 @@ class MergerfsDrivePoolApp(QWidget):
         self.populate_disks()
 
     def scan_system_disks(self):
-        """Queries the system hardware for unmounted storage blocks using JSON output."""
+        """Queries the system hardware for storage blocks using inclusive rules for VM testing."""
         try:
             cmd = ["lsblk", "-J", "-o", "NAME,PATH,UUID,FSTYPE,SIZE,MOUNTPOINT"]
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -64,15 +64,15 @@ class MergerfsDrivePoolApp(QWidget):
                 # Resolve partitions or fall back to base device if no children
                 partitions = dev.get("children", [dev])
                 for part in partitions:
-                    # Filter out system root layouts, boot loaders, or empty partitions
-                    # For safety in testing, we look for standard formatted data drives
-                    if part.get("fstype") in ["xfs", "ext4", "btrfs"] and not part.get("mountpoint"):
+                    # Inclusive VM test rule: Grab everything that isn't swap space
+                    if part.get("fstype") != "swap":
                         valid_candidates.append({
                             "name": part.get("name"),
                             "path": part.get("path"),
-                            "uuid": part.get("uuid"),
-                            "fstype": part.get("fstype"),
-                            "size": part.get("size")
+                            "uuid": part.get("uuid") or "NO_UUID_FOUND",
+                            "fstype": part.get("fstype") or "unformatted/raw",
+                            "size": part.get("size"),
+                            "mountpoint": part.get("mountpoint") or "Not Mounted"
                         })
             return valid_candidates
         except Exception as e:
@@ -85,14 +85,14 @@ class MergerfsDrivePoolApp(QWidget):
         disks = self.scan_system_disks()
         
         if not disks:
-            item = QListWidgetItem("No available/unmounted pool disks detected.")
+            item = QListWidgetItem("No available physical storage devices detected.")
             item.setFlags(Qt.ItemFlag.NoItemFlags)
             self.disk_list.addItem(item)
             return
 
         for disk in disks:
             # Format look and feel string for easy user mapping
-            display_text = f"💾 {disk['name']} [{disk['size']}] - Type: {disk['fstype'].upper()}\n   UUID: {disk['uuid']}"
+            display_text = f"💾 {disk['name']} [{disk['size']}] - Type: {disk['fstype'].upper()}\n   Mount: {disk['mountpoint']}\n   UUID: {disk['uuid']}"
             item = QListWidgetItem(display_text)
             
             # Save raw storage metadata directly inside the PyQt GUI list item container
@@ -111,11 +111,11 @@ class MergerfsDrivePoolApp(QWidget):
             item = self.disk_list.item(i)
             if item.checkState() == Qt.CheckState.Checked:
                 disk_data = item.data(Qt.ItemDataRole.UserRole)
-                if disk_data:
+                if disk_data and disk_data['uuid'] != "NO_UUID_FOUND":
                     selected_uuids.append(disk_data['uuid'])
                     
         if not selected_uuids:
-            QMessageBox.warning(self, "No Selection", "Please check at least one hard drive to add to the new pool structure.")
+            QMessageBox.warning(self, "No Selection", "Please check at least one drive with a valid UUID to process.")
             return
             
         QMessageBox.information(self, "Pool Builder Intelligence", 
